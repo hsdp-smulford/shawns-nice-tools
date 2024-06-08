@@ -30,3 +30,7 @@ You can also specify an event and a specific workflow:
 act pull_request -P ubuntu-latest=act:dev --pull=false -W .github/workflows/terraform-validate.yml
 ```
 
+Specify which tests to run:
+
+```shell
+act pull_request -P ubuntu-latest=act:dev --pull=false -W .github/workflows/test-workflows.yaml -j test-helm-module-scanning -j test-tf-module-docs
