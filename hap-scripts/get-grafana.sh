@@ -39,7 +39,7 @@ open_grafana() {
   echo "${grafana_password}" | pbcopy
   echo -e "Log into Grafana as: ${BLUE}${grafana_username}${NC}; password is saved to clipboard. 📋"
 
-  open -a "Brave Browser.app" "http://$grafana_endpoint"
+  open "http://$grafana_endpoint"
 }
 
 # Main script execution

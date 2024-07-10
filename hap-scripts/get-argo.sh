@@ -39,7 +39,7 @@ open_argocd() {
   echo "${argocd_password}" | pbcopy
   echo -e "Log into ArgoCD as: ${BLUE}admin${NC}; password is saved to clipboard. 📋"
 
-  open -a "Brave Browser.app" "http://$argocd_endpoint"
+  open "http://$argocd_endpoint"
 }
 
 # Main script execution
