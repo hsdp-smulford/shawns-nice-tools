@@ -59,7 +59,7 @@ for id in "${IGNORED_ACCOUNTS[@]}"; do
     IGNORED_ACCOUNTS_MAP["$id"]=1
 done
 
-ALL_ACCOUNT_IDS=($(aws organizations list-accounts --no-paginate --query 'Accounts[].Id' --output text))
+ALL_ACCOUNT_IDS=($(aws organizations list-accounts --no-paginate --query 'Accounts[?Status==`ACTIVE`].Id' --output text))
 ALL_ACCOUNT_IDS=($(printf "%s\n" "${ALL_ACCOUNT_IDS[@]}" | sort -n))
 echo "[$(date)]; Found accounts in the organization [${#ALL_ACCOUNT_IDS[@]}]: ${ALL_ACCOUNT_IDS[*]}" | tee -a $LOG_FILE
 
@@ -74,7 +74,7 @@ echo "[$(date)]; Accounts to run the guardrails-destroy workflow on [${#ACCOUNT_
 
 echo "[$(date)]; Triggering the guardrails-destroy workflow on all non-ignored accounts" | tee -a $LOG_FILE
 for account_id in "${ACCOUNT_IDS[@]}"; do
-    #gh workflow run $WORKFLOW -R $REPO -r $BRANCH -f account_id=$account_id
+    gh workflow run $WORKFLOW -R $REPO -r $BRANCH -f account_id=$account_id
     # gh workflow run $WORKFLOW -R $REPO -r $BRANCH -f account_id=$account_id -f aws_regions=$AWS_REGIONS
     echo "[$(date)]; Triggered ${WORKFLOW}, from ${BRANCH}, on account: $account_id" | tee -a $LOG_FILE
 done
