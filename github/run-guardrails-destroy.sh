@@ -1,5 +1,5 @@
 #!/opt/homebrew/bin/bash -e
-# shellcheck disable=SC2207,SC2016
+# shellcheck disable=SC2207,SC2016,SC2162
 # Purpose: Get all accounts in the organization to run the `guardrails-destroy.yaml` workflow on
 # Need help?: .github/workflows/run-guardrails-destroy.sh -h
 #
@@ -146,7 +146,7 @@ echo "[$(date)]; Accounts to run the guardrails-destroy workflow on [${#FILTERED
 
 # ARE YOU REAAAALLYYY SURE?
 echo "You are about to proceed with the destruction on ${#FILTERED_ACCOUNT_IDS[@]} accounts. Are you sure? (y/N) "
-read -pr "Confirm: " confirm && [[ $confirm == [yY] ]] || exit 1
+read -p "Confirm: " confirm && [[ $confirm == [yY] ]] || exit 1
 
 # Call the GH pipeline
 for account_id in "${FILTERED_ACCOUNT_IDS[@]}"; do
