@@ -116,7 +116,8 @@ fi
 # Determine accounts to process
 if [[ -z "$ACCOUNTS_PROVIDED" ]]; then
   # Retrieve all active accounts if no accounts are provided
-  ALL_ACCOUNT_IDS=($(aws organizations list-accounts --no-paginate --query 'Accounts[?Status==`ACTIVE`].Id' --output text))
+  # TODO: May need to paginate, someday.
+  ALL_ACCOUNT_IDS=($(aws organizations list-accounts -query 'Accounts[?Status==`ACTIVE`].Id' --output text))
   ALL_ACCOUNT_IDS=($(printf "%s\n" "${ALL_ACCOUNT_IDS[@]}" | sort -n))
   ACCOUNT_IDS=("${ALL_ACCOUNT_IDS[@]}")
 else
