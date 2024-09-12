@@ -10,6 +10,7 @@ PAT = os.environ.get('PAT', None)
 if PAT is None:
     PAT = getpass('Enter your GitHub personal access token: ')
 
+# TODO: Add variable for organization name if this is ever used again.
 GH_ORG = os.environ.get('GH_ORG', 'philips-internal')
 
 # GitHub API endpoint to list all teams in the organization
@@ -73,6 +74,7 @@ def main():
     data = {}
 
     for team in teams:
+        # TODO: Add variables for names if this is ever used again.
         if team['name'].startswith('fiesta-aft') or 'fiesta-foundation' in team['name']:
             repos = get_team_repos(team['slug'])
             maintainers = get_team_maintainers(team['slug'])
