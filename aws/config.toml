@@ -1,0 +1,40 @@
+[aws]
+account_ids = []
+ignored_account_ids = [
+    "408323507364",  # HSDP-AFT-ManagementPOC
+    "779955279592",  # HSDP-LogsPOC
+    "797464697121",  # HSDP-AuditPOC
+    "875566264904",  # HSDP-NetworkPOC
+    "532619675006",  # HSDP-PayerPOC
+    "618877362598",  # HSDP-SecurityPOC
+    "892239858235",  # HSDP-SharedServicesPOC
+    "767397720858",  # HSP-Compliance-Dev
+    "754892223783",  # HSDP Platform Engineering
+    "690395533361",  # HSP-AFT-Management
+    "688912733512",  # HSP-Audit
+    "593841917563",  # HSP-Logging
+    "251298902194",  # HSP-Network
+    "485027120931",  # HSP-Payer2
+    "375415408645",  # HSP-Security-Tools
+    "891377304704"   # HSP-Compliance
+]
+lambda_suffix = "-common-lambda"
+management_account_ids = [
+  "408323507364",
+  "690395533361"
+]
+payer_profile_name = "prod-payer"
+regions = [
+  "ap-south-1",
+  "ca-central-1",
+  "us-west-1",
+  "us-west-2",
+  "eu-west-2",
+  "eu-west-1",
+  "ap-northeast-1",
+  "sa-east-1",
+  "ap-southeast-2",
+  "us-east-1",
+  "us-east-2"
+]
+role_name = "AWSAFTAdmin"
