@@ -6,6 +6,8 @@ import logging
 import logging.config
 import tomli
 from datetime import datetime
+from rich.console import Console
+from rich.table import Table
 
 def load_config():
     with open('config.toml', 'rb') as f:
@@ -35,6 +37,21 @@ def query_active_accounts(payer_profile_name, ignored_account_ids):
                 all_account_ids.append(account['Id'])
     return sorted(all_account_ids)
 
+def get_account_name(account_id, session):
+    """Fetch account name from AWS Organizations"""
+    organizations_client = session.client('organizations')
+    response = organizations_client.describe_account(AccountId=account_id)
+    return response['Account']['Name']
+
+def format_region_name(region):
+    """Convert AWS region name (e.g., ap-northeast-1) to apne1."""
+    return region.replace("north", "n") \
+                 .replace("south", "s") \
+                 .replace("east", "e") \
+                 .replace("west", "w") \
+                 .replace("central", "c") \
+                 .replace("-", "")
+
 @dataclass
 class Base:
     lambda_suffix: str
@@ -49,7 +66,7 @@ class Base:
     def __post_init__(self):
         # Directly use payer profile for session
         session = boto3.Session()
-        payer_session = boto3.Session(profile_name=self.payer_profile_name)
+        self.payer_session = boto3.Session(profile_name=self.payer_profile_name)
         current_account = session.client('sts').get_caller_identity()['Account']
         logger.info(f"Current account: {current_account}")
 
@@ -64,6 +81,7 @@ class Base:
 @dataclass
 class AwsAccount:
     account_id: str
+    account_name: str
     lambda_suffix: str
     regions: list
     role_name: str
@@ -72,7 +90,7 @@ class AwsAccount:
     session: boto3.Session
 
     def __str__(self):
-        return f'AwsAccount(account_id={self.account_id})'
+        return f'AwsAccount(account_id={self.account_id}, account_name={self.account_name})'
 
     def list_lambdas(self):
         # Assume `AWSAFTExecution` role in the target account (for role chaining)
@@ -90,6 +108,9 @@ class AwsAccount:
                 for func in page['Functions']:
                     if func['FunctionName'].endswith(self.lambda_suffix):
                         lambdas.append(func['FunctionName'])
+                        logger.warning(f"Found matching Lambda: {func['FunctionName']} in region {region} for account {self.account_id}")
+            if not lambdas:
+                logger.debug(f"No matching Lambdas found in region {region} for account {self.account_id}")
         return lambdas
 
 
@@ -121,6 +142,8 @@ def main():
     aws_accounts = [
         AwsAccount(
             account_id=account_id,
+            # Get account name either from config or AWS Organizations
+            account_name = get_account_name(account_id, base.payer_session),
             lambda_suffix=base.lambda_suffix,
             regions=base.regions,
             role_name=base.role_name,
@@ -131,12 +154,34 @@ def main():
         for account_id in base.account_ids if account_id not in base.ignored_account_ids
     ]
 
-    # print it.
-    for account in aws_accounts:
-        lambdas = account.list_lambdas()
-        for lambda_name in lambdas:
-            logger.info(f"Found Lambda in {account.account_id}: {lambda_name}")
+    # Initialize rich table
+    console = Console()
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Account ID", justify="left")
+    table.add_column("Account Name", justify="left")
+    
+    # Dynamically add region columns
+    for region in base.regions:
+        table.add_column(format_region_name(region), justify="right")
 
+    # Iterate over accounts and regions
+    for account in aws_accounts:
+        row = [account.account_id, account.account_name]
+        lambdas_count = {region: 0 for region in base.regions}
+
+        for region in base.regions:
+            lambdas = account.list_lambdas()
+            lambdas_count[region] = len(lambdas)
+
+        # Add counts for each region to the row
+        for region in base.regions:
+            row.append(str(lambdas_count[region]))
+
+        # Add row to table
+        table.add_row(*row)
+
+    # Finalize table print after processing all regions
+    console.print(table)
 
 if __name__ == '__main__':
     main()
