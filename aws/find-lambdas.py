@@ -1,19 +1,35 @@
 #!/usr/bin/env python3
 
-import boto3
-from dataclasses import dataclass, field
 import logging
 import logging.config
-import tomli
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+
+import boto3
+import tomli
+from rich import box
 from rich.console import Console
 from rich.table import Table
 
+
+# Load configuration from config.toml
 def load_config():
+    """Loads configuration from the config.toml file."""
     with open('config.toml', 'rb') as f:
         return tomli.load(f)
 
 def assume_role(session, role_arn, role_session_name='AWSAFT-Session'):
+    """
+    Assumes an IAM role and returns a new boto3 session with the role's credentials.
+
+    Args:
+        session: The current boto3 session.
+        role_arn: The ARN of the role to assume.
+        role_session_name: The name for the assumed role session.
+
+    Returns:
+        A new boto3 session with the assumed role's credentials.
+    """
     sts_client = session.client('sts')
     response = sts_client.assume_role(
         RoleArn=role_arn,
@@ -27,6 +43,16 @@ def assume_role(session, role_arn, role_session_name='AWSAFT-Session'):
     )
 
 def query_active_accounts(payer_profile_name, ignored_account_ids):
+    """
+    Queries AWS Organizations for all active accounts, excluding ignored ones.
+
+    Args:
+        payer_profile_name: The AWS profile name for the payer account.
+        ignored_account_ids: A list of account IDs to ignore.
+
+    Returns:
+        A sorted list of active account IDs.
+    """
     payer_session = boto3.Session(profile_name=payer_profile_name)
     organizations_client = payer_session.client('organizations')
     paginator = organizations_client.get_paginator('list_accounts')
@@ -38,13 +64,30 @@ def query_active_accounts(payer_profile_name, ignored_account_ids):
     return sorted(all_account_ids)
 
 def get_account_name(account_id, session):
-    """Fetch account name from AWS Organizations"""
+    """
+    Fetches the account name from AWS Organizations.
+
+    Args:
+        account_id: The ID of the account.
+        session: The boto3 session.
+
+    Returns:
+        The name of the account.
+    """
     organizations_client = session.client('organizations')
     response = organizations_client.describe_account(AccountId=account_id)
     return response['Account']['Name']
 
 def format_region_name(region):
-    """Convert AWS region name (e.g., ap-northeast-1) to apne1."""
+    """
+    Converts an AWS region name to a shortened format.
+
+    Args:
+        region: The AWS region name (e.g., ap-northeast-1).
+
+    Returns:
+        The shortened region name (e.g., apne1).
+    """
     return region.replace("north", "n") \
                  .replace("south", "s") \
                  .replace("east", "e") \
@@ -52,136 +95,140 @@ def format_region_name(region):
                  .replace("central", "c") \
                  .replace("-", "")
 
-@dataclass
-class Base:
-    lambda_suffix: str
-    regions: list
-    role_name: str
-    management_account_ids: list
-    payer_profile_name: str
-    session: boto3.Session = None
-    account_ids: list = field(default_factory=list)
-    ignored_account_ids: list = field(default_factory=list)
+def count_lambdas_in_region(session, region, lambda_suffix):
+    """
+    Counts the number of Lambda functions with a matching suffix in a specific region.
 
-    def __post_init__(self):
-        # Directly use payer profile for session
-        session = boto3.Session()
-        self.payer_session = boto3.Session(profile_name=self.payer_profile_name)
-        current_account = session.client('sts').get_caller_identity()['Account']
-        logger.info(f"Current account: {current_account}")
+    Args:
+        session: The boto3 session.
+        region: The AWS region name.
+        lambda_suffix: The suffix to match against Lambda function names.
 
-        if current_account in self.management_account_ids:
-            management_role_arn = f"arn:aws:iam::{current_account}:role/{self.role_name}"
-            logger.info(f"Assuming role {self.role_name} in management account {current_account}")
-            self.session = assume_role(session, management_role_arn)
-        else:
-            logger.warning(f"Current account {current_account} is not in the list of management accounts. Proceeding without assuming role.")
-            self.session = session
+    Returns:
+        A tuple containing the region name and the count of matching Lambda functions.
+    """
+    lambda_client = session.client('lambda', region_name=region)
+    lambdas_count = 0
+    paginator = lambda_client.get_paginator('list_functions')
+    for page in paginator.paginate():
+        for func in page['Functions']:
+            if func['FunctionName'].endswith(lambda_suffix):
+                lambdas_count += 1
+    return region, lambdas_count
 
-@dataclass
-class AwsAccount:
-    account_id: str
-    account_name: str
-    lambda_suffix: str
-    regions: list
-    role_name: str
-    management_account_ids: list
-    payer_profile_name: str
-    session: boto3.Session
+def list_lambdas(account_id, lambda_suffix, regions, session):   
+    """
+    Lists Lambda functions with a matching suffix in all specified regions.
 
-    def __str__(self):
-        return f'AwsAccount(account_id={self.account_id}, account_name={self.account_name})'
+    Args:
+        account_id: The ID of the account.
+        lambda_suffix: The suffix to match against Lambda function names.
+        regions: A list of AWS region names.
+        session: The boto3 session.
 
-    def list_lambdas(self):
-        # Assume `AWSAFTExecution` role in the target account (for role chaining)
-        role_name = "AWSAFTExecution"
-        role_arn = f"arn:aws:iam::{self.account_id}:role/{role_name}"
-        logger.info(f"Assuming {role_name} role in account {self.account_id}")
-        target_session = assume_role(self.session, role_arn)
+    Returns:
+        A dictionary containing the count of matching Lambda functions in each region.
+    """
+    lambdas_count = {} 
+    with ThreadPoolExecutor() as executor:
+        futures = [executor.submit(count_lambdas_in_region, session, region, lambda_suffix) for region in regions]
+        for future in as_completed(futures):
+            region, count = future.result()
+            lambdas_count[region] = count
+            logger.debug(f"Account ID: {account_id}; Region: {region}; Matching Lambdas: {count}")
 
-        lambdas = []
-        for region in self.regions:
-            logger.info(f"Checking region {region} in account {self.account_id}")
-            lambda_client = target_session.client('lambda', region_name=region)
-            paginator = lambda_client.get_paginator('list_functions')
-            for page in paginator.paginate():
-                for func in page['Functions']:
-                    if func['FunctionName'].endswith(self.lambda_suffix):
-                        lambdas.append(func['FunctionName'])
-                        logger.warning(f"Found matching Lambda: {func['FunctionName']} in region {region} for account {self.account_id}")
-            if not lambdas:
-                logger.debug(f"No matching Lambdas found in region {region} for account {self.account_id}")
-        return lambdas
-
+    return lambdas_count
 
 def main():
+    """
+    Main function to orchestrate the Lambda discovery process.
+
+    1. Loads configuration.
+    2. Determines target account IDs.
+    3. Sets up the output table.
+    4. Processes each account concurrently to find matching Lambdas.
+    5. Prints the results table.
+    """
     logging.config.fileConfig('logging.conf')
     global logger
     logger = logging.getLogger(__name__)
 
-    logger.info('Starting find-lambdas.py')
-
+    logger.info('Starting Lambda discovery')
     config = load_config()
 
-    # Query active accounts once
-    active_account_ids = query_active_accounts(config['aws']['payer_profile_name'], config['aws'].get('ignored_account_ids', []))
-    logger.info(f"Discovered active account IDs [{len(active_account_ids)}]: {active_account_ids}")
+    # Determine target account IDs
+    if config['aws'].get('account_ids'):
+        active_account_ids = config['aws']['account_ids']
+        logger.info(f"Using specified account IDs [{len(active_account_ids)}]: {active_account_ids}")
+    else:
+        # If not specified, query active accounts
+        active_account_ids = query_active_accounts(config['aws']['payer_profile_name'], config['aws'].get('ignored_account_ids', []))
+        logger.info(f"Discovered active account IDs [{len(active_account_ids)}]: {active_account_ids}")
 
-    # Initialize the base class, which will handle account querying if necessary
-    base = Base(
-        lambda_suffix=config['aws']['lambda_suffix'],
-        regions=config['aws']['regions'],
-        role_name=config['aws']['role_name'],
-        management_account_ids=config['aws']['management_account_ids'],
-        payer_profile_name=config['aws']['payer_profile_name'],
-        account_ids=active_account_ids,
-        ignored_account_ids=config['aws'].get('ignored_account_ids', [])
-    )
-
-    # Create AWS account objects
-    aws_accounts = [
-        AwsAccount(
-            account_id=account_id,
-            # Get account name either from config or AWS Organizations
-            account_name = get_account_name(account_id, base.payer_session),
-            lambda_suffix=base.lambda_suffix,
-            regions=base.regions,
-            role_name=base.role_name,
-            management_account_ids=base.management_account_ids,
-            payer_profile_name=base.payer_profile_name,
-            session=base.session
-        )
-        for account_id in base.account_ids if account_id not in base.ignored_account_ids
-    ]
-
-    # Initialize rich table
+    # Prepare the output table
     console = Console()
-    table = Table(show_header=True, header_style="bold magenta")
-    table.add_column("Account ID", justify="left")
-    table.add_column("Account Name", justify="left")
+    table = Table(title=f"Matching Lambda Summary, {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", show_header=True, header_style="bold magenta", box=box.ROUNDED)
+    table.add_column("Account ID", justify="center", style="dim", width=12)
+    table.add_column("Account Name", justify="left", style="dim") # Left justify and no truncation
     
     # Dynamically add region columns
-    for region in base.regions:
-        table.add_column(format_region_name(region), justify="right")
+    for region in config['aws']['regions']:
+        table.add_column(format_region_name(region), justify="center", style="dim")
 
-    # Iterate over accounts and regions
-    for account in aws_accounts:
-        row = [account.account_id, account.account_name]
-        lambdas_count = {region: 0 for region in base.regions}
+    # Process each account concurrently
+    with ThreadPoolExecutor() as executor:
+        futures = []
+        for account_id in active_account_ids:
+            futures.append(executor.submit(process_account, account_id, config, table))
+        for future in as_completed(futures):
+            future.result()  # Get the result to propagate any exceptions
 
-        for region in base.regions:
-            lambdas = account.list_lambdas()
-            lambdas_count[region] = len(lambdas)
-
-        # Add counts for each region to the row
-        for region in base.regions:
-            row.append(str(lambdas_count[region]))
-
-        # Add row to table
-        table.add_row(*row)
-
-    # Finalize table print after processing all regions
+    # Print the results table
     console.print(table)
+
+def process_account(account_id, config, table):
+    """
+    Processes a single account to find matching Lambdas and update the table.
+
+    Args:
+        account_id: The ID of the account to process.
+        config: The loaded configuration from config.toml.
+        table: The Rich Table instance to update with the results.
+    """
+    payer_session = boto3.Session(profile_name=config['aws']['payer_profile_name'])
+    try:
+        account_name = get_account_name(account_id, payer_session)
+        row = [account_id, f"[bold white]{account_name}[/]" ]
+
+        # Assume roles for access
+        session = boto3.Session()
+        current_account_id = session.client('sts').get_caller_identity()['Account']
+
+        # Assume AWSAFTAdmin role in the management account
+        if current_account_id in config['aws'].get('management_account_ids', []):
+            admin_role_arn = f"arn:aws:iam::{current_account_id}:role/{config['aws']['management_role_name']}"
+            session = assume_role(session, admin_role_arn)
+            logger.debug(f"Assumed AWSAFTAdmin role in management account: {current_account_id}")
+
+        # Assume AWSAFTExecution role in the target account
+        execution_role_arn = f"arn:aws:iam::{account_id}:role/{config['aws']['execution_role_name']}"
+        session = assume_role(session, execution_role_arn)
+        logger.debug(f"Assumed AWSAFTExecution role in target account: {account_id}")
+
+        # Get Lambda counts for all regions
+        lambdas_count_dict = list_lambdas(account_id, config['aws']['lambda_suffix'], config['aws']['regions'], session)
+    except Exception as e:
+        logger.error(f"Error processing account {account_id}: {e}")
+        row = [account_id, "Error", *["N/A" for _ in config['aws']['regions']]]  
+        table.add_row(*row, style="red")  # Add the error row and return
+        return
+
+    # Add counts to the row, format based on count value
+    for region in config['aws']['regions']:
+        count = lambdas_count_dict.get(region, 0)
+        row.append(f"[bold blue]{count}[/]" if count > 0 else "[dim grey]-[/]") # Highlight > 0, use "-" for 0
+
+    table.add_row(*row) 
 
 if __name__ == '__main__':
     main()

@@ -1,5 +1,6 @@
 [aws]
 account_ids = []
+execution_role_name = "AWSAFTExecution"
 ignored_account_ids = [
     "408323507364",  # HSDP-AFT-ManagementPOC
     "779955279592",  # HSDP-LogsPOC
@@ -37,4 +38,4 @@ regions = [
   "us-east-1",
   "us-east-2"
 ]
-role_name = "AWSAFTAdmin"
+management_role_name = "AWSAFTAdmin"

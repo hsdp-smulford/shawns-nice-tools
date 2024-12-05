@@ -10,6 +10,7 @@ package-mode = false
 python = "^3.13"
 boto3 = "^1.26"
 rich = "^12.0"
+ruff = "^0.1"
 tomli = "^1.2"
 
 [tool.poetry.dev-dependencies]
@@ -17,3 +18,8 @@ tomli = "^1.2"
 [build-system]
 requires = ["poetry>=1.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+line-length = 120
+select = ["E", "F", "I"]
+ignore = ["E501"]
