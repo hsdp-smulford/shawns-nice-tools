@@ -28,17 +28,41 @@ list_ous() {
 
     ous=$(aws organizations list-organizational-units-for-parent --parent-id "$parent_id" \
         --query 'OrganizationalUnits[*].[Id,Name]' --output text)
-
+    
     handle_error $? "Failed to fetch OUs for parent ${parent_id}."
 
-    if [ -z "$ous" ]; then
-        return
+    if [ -n "$ous" ]; then
+        while IFS=$'\t' read -r ou_id ou_name; do
+            # Get account count for this specific OU with pagination
+            accounts=0
+            token=""
+            
+            while true; do
+                if [ -z "$token" ]; then
+                    result=$(aws organizations list-accounts-for-parent --parent-id "$ou_id" \
+                        --query '[Accounts[*],NextToken]' --output json)
+                else
+                    result=$(aws organizations list-accounts-for-parent --parent-id "$ou_id" \
+                        --next-token "$token" --query '[Accounts[*],NextToken]' --output json)
+                fi
+                
+                # Add the count of accounts in this page
+                page_count=$(echo "$result" | jq '.[0] | length')
+                accounts=$((accounts + page_count))
+                
+                # Get the next token
+                token=$(echo "$result" | jq -r '.[1]')
+                
+                # Break if no more pages
+                if [ "$token" = "null" ]; then
+                    break
+                fi
+            done
+            
+            echo -e "${indent}${COLOR_GREEN}${ou_id}${COLOR_RESET} [${COLOR_BLUE}${ou_name}${COLOR_RESET}]: ${COLOR_RED}${accounts} accounts${COLOR_RESET}"
+            list_ous "$ou_id" "$indent|  "
+        done <<< "$ous"
     fi
-
-    while IFS=$'\t' read -r ou_id ou_name; do
-        echo -e "${indent}${COLOR_GREEN}${ou_id}${COLOR_RESET} [${COLOR_BLUE}${ou_name}${COLOR_RESET}]"
-        list_ous "$ou_id" "$indent|  "
-    done <<< "$ous"
 }
 
 root_account_id=$(aws organizations describe-organization --query 'Organization.MasterAccountId' --output text)
